@@ -209,8 +209,8 @@ class BlivetVolume(object):
         return fmt
 
     def _get_size(self):
-        spec = self._volume['size'].strip()
-        if '%' in spec and self._blivet_pool:
+        spec = self._volume['size']
+        if isinstance(spec, str) and '%' in spec and self._blivet_pool:
             try:
                 percentage = int(spec[:-1].strip())
             except ValueError:
@@ -347,7 +347,7 @@ class BlivetPartitionVolume(BlivetVolume):
 
         size = Size("256 MiB")
         maxsize = None
-        if '%' in self._volume['size']:
+        if isinstance(self._volume['size'], str) and '%' in self._volume['size']:
             maxsize = self._get_size()
 
         try:
@@ -372,7 +372,7 @@ class BlivetLVMVolume(BlivetVolume):
 
     def _get_size(self):
         size = super(BlivetLVMVolume, self)._get_size()
-        if '%' in self._volume['size']:
+        if isinstance(self._volume['size'], str) and '%' in self._volume['size']:
             size = self._blivet_pool._device.align(size, roundup=True)
         return size
 
