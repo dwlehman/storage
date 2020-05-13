@@ -88,7 +88,7 @@
     var: _storage_volumes
 
 - name: get required packages
-  blivet:
+  storage_blivet:
     pools: "{{ _storage_pools }}"
     volumes: "{{ _storage_volumes }}"
     use_partitions: "{{ storage_use_partitions }}"
@@ -102,7 +102,7 @@
     state: present
 
 - name: manage the pools and volumes to match the specified state
-  blivet:
+  storage_blivet:
     pools: "{{ _storage_pools }}"
     volumes: "{{ _storage_volumes }}"
     use_partitions: "{{ storage_use_partitions }}"
@@ -120,43 +120,6 @@
 - name: set the list of volumes for test verification
   set_fact:
     _storage_volumes_list: "{{ blivet_output.volumes }}"
-
-# Mount Management
-#
-# remove obsolete mounts
-#  removed
-#  reformatted (just add w/ new settings?)
-#  changed options? (just add w/ new settings?)
-# add new mounts
-#
-- name: manage mounts to match the specified state
-  mount:
-    src: "{{ mount_info['src'] if mount_info['state'] == 'mounted' else omit }}"
-    path: "{{ mount_info['path'] }}"
-    fstype: "{{ mount_info['fstype'] if mount_info['state'] == 'mounted' else omit }}"
-    opts: "{{ mount_info['opts'] if mount_info['state'] == 'mounted' else omit }}"
-    state: "{{ mount_info['state'] }}"
-  loop: "{{ blivet_output.mounts }}"
-  loop_control:
-    loop_var: mount_info
-
-- name: manage swap entries in /etc/fstab manually
-  lineinfile:
-    path: /etc/fstab
-    regex: "{{ swap_info['regex'] }}"
-    state: "{{ swap_info['state'] }}"
-    line: "{{ swap_info.get('line', 'omit') }}"
-  loop: "{{ blivet_output.swaps }}"
-  loop_control:
-    loop_var: swap_info
-
-
-- name: manage state of swaps
-  command: swapon "{{ swap_info['device'] }}"
-  when: swap_info['state'] == 'present'
-  loop: "{{ blivet_output.swaps }}"
-  loop_control:
-    loop_var: swap_info
 
 - name: tell systemd to refresh its view of /etc/fstab
   systemd:

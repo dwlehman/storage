@@ -609,6 +609,7 @@ class FSTab(object):
     def __init__(self, blivet_obj):
         self._blivet = blivet_obj
         self._entries = list()
+        self._header_comments = list()
         self.parse()
 
     def lookup(self, key, value):
@@ -616,137 +617,135 @@ class FSTab(object):
 
     def reset(self):
         self._entries = list()
+        self._header_comments = list()
 
     def parse(self):
         if self._entries:
             self.reset()
 
+        # Save all comments up to the first entry as the header.
+        # Save all comments between entries as comments on the next entry.
+        comments = list()  # list of comment lines for the next entry
         for line in open('/etc/fstab').readlines():
             if line.lstrip().startswith("#"):
+                if not self._entries:
+                    self._header_comments.append(line)
+                else:
+                    comments.append(line)
+
                 continue
 
             fields = line.split()
             if len(fields) < 6:
+                log.warning("fstab: ignoring invalid line: '%s'", line)
                 continue
 
             device = self._blivet.devicetree.resolve_device(fields[0])
             self._entries.append(dict(device_id=fields[0],
                                       device_path=getattr(device, 'path', None),
-                                      fs_type=fields[2],
                                       mount_point=fields[1],
-                                      mount_options=fields[3]))
+                                      fs_type=fields[2],
+                                      mount_options=fields[3],
+                                      dump=fields[4],
+                                      passno=fields[5],
+                                      comments=comments))
+            comments = list()
 
+    def write(self):
+        fmt_str = "{e['device_id']:<23} {e['mount_point']:<23} {e['fs_type']:<7} {e['mount_options']:<15} {e[4]} {e[5]}\n"
+        with open('/etc/fstab', 'w') as fstab:
+            for header in self._header_comments:
+                fstab.write(header)
 
-def get_mount_info(pools, volumes, actions, fstab):
-    """ Return a list of argument dicts to pass to the mount module to manage mounts.
+            for entry in self._entries:
+                while True:
+                    comment = next(self._comments, None)
+                    if not comment:
+                        break
 
-        The overall approach is to remove existing mounts associated with file systems
-        we are removing and those with changed mount points, re-adding them with the
-        new mount point later.
+                    fstab.write(comment)
+                    comment = None
 
-        Removed mounts go directly into the mount_info list, which is the return value,
-        while added/active mounts to a list that gets appended to the mount_info list
-        at the end to ensure that removals happen first.
+                fstab.write(fmt_str.format(e=entry))
 
-        The 'mount' module cannot be used to manage swap entries in /etc/fstab as it
-        will remove all pre-existing swaps due to matching by mount point. Swap space
-        management happens in get_swap_info, below, and in the main blivet tasks file.
-    """
-    mount_info = list()
-    mount_vols = list()
+    def find(self, device_id=None, device_path=None, mount_point=None):
+        matches = self._entries[:]
+        if device_path:
+            matches = [e for e in matches if e['device_path'] == device_path]
+        if device_id:
+            matches = [e for e in matches if e['device_id'] == device_id]
+        if mount_point:
+            matches = [e for e in matches if e['mount_point'] == mount_point]
 
-    # account for mounts removed by removing or reformatting volumes
-    if actions:
-        for action in actions:
-            if action.is_destroy and action.is_format and action.format.type not in (None, "swap"):
-                mount = fstab.lookup('device_path', action.device.path)
-                if mount is not None:
-                    mount_info.append({"path": mount['mount_point'], 'state': 'absent'})
+        return matches
 
-    def handle_new_mount(volume, fstab):
-        replace = None
-        mounted = False
+    def entry_from_device(self, device):
+        entry = dict(device_id=device.fstab_spec,
+                     device_path=device.path,
+                     mount_point=mount_point,
+                     options=device.format.options,
+                     dump=device.format.dump,
+                     passno='2' if device.format.check else '0')
+        return entry
 
-        mount = fstab.lookup('device_path', volume['_device'])
-        if volume['mount_point'] and volume['fs_type'] != 'swap':
-            mounted = True
+    def add(self, device):
+        if device.format.mountable:
+            mount_point = device.format.mountpoint
+        elif device.format.type == 'swap':
+            mount_point = 'none'
+        else:
+            raise ValueError("cannot add fstab entry for '%s'" % str(device))
 
-        # handle removal of existing mounts of this volume
-        if mount and mount['mount_point'] != volume['mount_point'] and mount['fs_type'] != 'swap':
-            replace = mount['mount_point']
+        entry = entry_from_device(device)
+        self._entries.append(entry)
 
-        return mounted, replace
+    def remove(self, device=None, fmt=None, entry=None):
+        if device:
+            path = device.path
+            if fmt is None:
+                fmt = device.format
+        if fmt:
+            path = fmt.device
 
-    # account for mounts that we set up or are replacing in pools
-    for pool in pools:
-        for volume in pool['volumes']:
-            if pool['state'] == 'present' and volume['state'] == 'present':
-                mounted, replace = handle_new_mount(volume, fstab)
-                if replace:
-                    mount_info.append({"path": replace, 'state': 'absent'})
-                if mounted:
-                    mount_vols.append(volume)
+        if entry:
+            entries = [entry]
+        else:
+            entries = self.find(device_path=path, mount_point=getattr(fmt, 'mountpoint', None))
 
-    # account for mounts that we set up or are replacing in standalone volumes
-    for volume in volumes:
-        if volume['state'] == 'present':
-            mounted, replace = handle_new_mount(volume, fstab)
-            if replace:
-                mount_info.append({"path": replace, 'state': 'absent'})
-            if mounted:
-                mount_vols.append(volume)
+        if not entries
+            return
 
-    for volume in mount_vols:
-        mount_info.append({'src': volume['_mount_id'],
-                           'path': volume['mount_point'],
-                           'fstype': volume['fs_type'],
-                           'opts': volume['mount_options'],
-                           'dump': volume['mount_check'],
-                           'passno': volume['mount_passno'],
-                           'state': 'mounted'})
+        for entry in entries:
+            self._entries.remove(entry)
 
-    return mount_info
+    def update_entry_from_device(self, entry, device):
+        """ Update fs type, mount point, and options for an entry from a device. """
+        if not isinstance(entry, dict):
+            raise TypeError("entry must be a dict")
 
+        if not isinstance(device, devices.StorageDevice):
+            raise TypeError("device must be a blivet.devices.StorageDevice")
 
-def get_swap_info(pools, volumes, actions, fstab):
-    """
-    There are three possible actions for swap:
+        updates = dict()
 
-        1. we must remove an entry for a removed/reformatted swap
-        2. we must add an entry for a created/missing swap
-        3. we must adjust an existing entry for an existing swap (options, etc.)
-    """
-    swaps = list()
+        # mount point
+        if device.format.mountable:
+            if not device.format.mountpoint:
+                raise ValueError("cannot update entry for file system with no mount point")
 
-    # account for swaps removed by removing or reformatting volumes
-    if actions:
-        for action in actions:
-            if action.is_destroy and action.is_format and action.format.type == "swap":
-                mount = fstab.lookup('device_path', action.device.path)
-                if mount is not None:
-                    swaps.append({'regex': "^{}\s+swap".format(mount['device_id']), 'state': 'absent'})
+            updates['mount_point'] = device.format.mountpoint
+        elif device.format.type == "swap":
+            updates['mount_point'] = "none"
+        else:
+            raise ValueError("cannot update entry for device formatted as '%s'" % device.format.type)
 
-    def handle_new_swap(volume, fstab):
-        mount = fstab.lookup('device_path', volume['_device'])
-        line = "{_mount_id} {fs_type} {fs_type} {mount_options} {mount_check} {mount_passno}".format(**volume)
-        swap_info = dict(state='present', line=line, regex='omit', device=volume['_device'])
-        if mount is not None:
-            swap_info['regex'] = "^{}\s+".format(mount['device_id'])
+        # fs type
+        updates['fs_type'] = device.format.mount_type
 
-        return swap_info
+        # options
+        updates['options'] = device.format.options
 
-    # volumes in pools
-    for pool in pools:
-        for volume in pool['volumes']:
-            if volume['fs_type'] == 'swap' and pool['state'] == 'present' and volume['state'] == 'present':
-                swaps.append(handle_new_swap(volume, fstab))
-
-    # standalone volumes
-    for volume in volumes:
-        if volume['fs_type'] == 'swap' and volume['state'] == 'present':
-            swaps.append(handle_new_swap(volume, fstab))
-
-    return swaps
+        entry.update(updates)
 
 
 def get_required_packages(b, pools, volumes):
@@ -780,8 +779,6 @@ def run_module():
         changed=False,
         actions=list(),
         leaves=list(),
-        mounts=list(),
-        swaps=list(),
         pools=list(),
         volumes=list(),
         packages=list(),
@@ -824,6 +821,15 @@ def run_module():
 
         actions.append(action)
 
+    def manage_fstab(action):
+        if action.is_destroy:
+            if action.is_format:
+                fstab.remove(fmt=action.format)
+            else:
+                fstab.remove(device=action.device)
+        elif action.is_create and action.is_format:
+            fstab.add(fmt=action.format)
+
     def action_dict(action):
         return dict(action=action.type_desc_str,
                     fs_type=action.format.type if action.is_format else None,
@@ -851,6 +857,7 @@ def run_module():
     if scheduled:
         ## execute the scheduled actions, committing changes to disk
         callbacks.action_executed.add(record_action)
+        callbacks.action_executed.add(manage_fstab)
         try:
             b.devicetree.actions.process(devices=b.devicetree.devices, dry_run=module.check_mode)
         except Exception:
@@ -859,8 +866,29 @@ def run_module():
             result['changed'] = True
             result['actions'] = [action_dict(a) for a in actions]
 
-    result['mounts'] = get_mount_info(module.params['pools'], module.params['volumes'], actions, fstab)
-    result['swaps'] = get_swap_info(module.params['pools'], module.params['volumes'], actions, fstab)
+    # manage fstab for devices not associated with any actions (could have changed mount point)
+    action_devices = [a.device for a in actions]
+    for leaf in b.devicetree.leaves:
+        if leaf in action_devices:
+            continue
+
+        entries = fstab.find(device_path=leaf.path)
+        if leaf.format.mountable or leaf.format.type == "swap":
+            if entries:
+                if leaf.format.mountable and not leaf.format.mountpoint:
+                    fstab.remove(entries[0])
+                else:
+                    fstab.update_from_device(entries[0], leaf)
+
+                if len(entries) > 1:
+                    for duplicate in entries[1:]:
+                        fstab.remove(duplicate)
+            else:
+                fstab.add(leaf)
+        elif entries:
+            for obsolete in entries:
+                fstab.remove(obsolete)
+
     result['leaves'] = [d.path for d in b.devicetree.leaves]
     result['pools'] = module.params['pools']
     result['volumes'] = module.params['volumes']
