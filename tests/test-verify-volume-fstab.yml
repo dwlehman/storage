@@ -10,7 +10,7 @@
 - name: Verify that the device identifier appears in /etc/fstab
   assert:
     that: "{{ storage_test_fstab_id_matches|length == storage_test_fstab_expected_matches|int }}"
-    msg: "Expected device identifier not found in /etc/fstab."
+    msg: "Expected device identifier not found in /etc/fstab: {{ storage_test_volume._mount_id }}"
   when: _storage_test_volume_present
 
 # mount point

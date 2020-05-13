@@ -8,6 +8,7 @@
   package:
     name: "{{ blivet_package_list }}"
     state: present
+  when: false
 
 ##
 ## This is all to fill in missing defaults in the list of pools (and their volumes).
@@ -95,11 +96,13 @@
     disklabel_type: "{{ storage_disklabel_type }}"
     packages_only: true
   register: package_info
+  when: false
 
 - name: make sure required packages are installed
   package:
     name: "{{ package_info.packages }}"
     state: present
+  when: false
 
 - name: manage the pools and volumes to match the specified state
   storage_blivet:
@@ -124,7 +127,7 @@
 - name: tell systemd to refresh its view of /etc/fstab
   systemd:
     daemon_reload: yes
-  when: blivet_output['mounts'] or blivet_output['swaps']
+  when: blivet_output['changed']
 
 #
 # Update facts since we may have changed system state.
