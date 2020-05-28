@@ -364,11 +364,12 @@ class BlivetLVMVolume(BlivetVolume):
         except Exception:
             raise BlivetAnsibleError("invalid size '%s' specified for volume '%s'" % (self._volume['size'], self._volume['name']))
 
-        fmt = self._get_format()
         if size > parent.free_space:
-            raise BlivetAnsibleError("specified size for volume '%s' exceeds available space in pool '%s' (%s)" % (size,
-                                                                                                                   parent.name,
-                                                                                                                   parent.free_space))
+            log.info("reducing size of %s from %s to %s to fit in available space in pool %s",
+                     self._volume['name'], size, parent.free_space, parent.name)
+            size = parent.free_space
+
+        fmt = self._get_format()
 
         try:
             device = self._blivet.new_lv(name=self._volume['name'],
