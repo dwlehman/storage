@@ -208,6 +208,24 @@ class BlivetVolume(object):
 
         return fmt
 
+    def _get_size(self):
+        spec = self._volume['size'].strip()
+        if '%' in spec and self._blivet_pool:
+            try:
+                percentage = int(spec[:-1].strip())
+            except ValueError:
+                raise BlivetAnsibleError("invalid percentage '%s' size specified for volume '%s'" % (self._volume['size'], self._volume['name']))
+
+            parent = self._blivet_pool._device
+            size = parent.size * (percentage / 100.0)
+        else:
+            try:
+                size = Size(spec)
+            except Exception:
+                raise BlivetAnsibleError("invalid size specification for volume '%s': '%s'" % (self._volume['name'], self._volume['size']))
+
+        return size
+
     def _create(self):
         """ Schedule actions as needed to ensure the volume exists. """
         pass
@@ -226,10 +244,7 @@ class BlivetVolume(object):
 
     def _resize(self):
         """ Schedule actions as needed to ensure the device has the desired size. """
-        try:
-            size = Size(self._volume['size'])
-        except Exception:
-            raise BlivetAnsibleError("invalid size specification for volume '%s': '%s'" % (self._volume['name'], self._volume['size']))
+        size = self._get_size()
 
         if size and self._device.resizable and self._device.size != size:
             if self._device.format.resizable:
@@ -331,8 +346,12 @@ class BlivetPartitionVolume(BlivetVolume):
             raise BlivetAnsibleError("failed to find pool '%s' for volume '%s'" % (self._blivet_pool['name'], self._volume['name']))
 
         size = Size("256 MiB")
+        maxsize = None
+        if '%' in self._volume['size']:
+            maxsize = self._get_size()
+
         try:
-            device = self._blivet.new_partition(parents=[parent], size=size, grow=True, fmt=self._get_format())
+            device = self._blivet.new_partition(parents=[parent], size=size, maxsize=maxsize, grow=True, fmt=self._get_format())
         except Exception:
             raise BlivetAnsibleError("failed set up volume '%s'" % self._volume['name'])
 
@@ -351,6 +370,12 @@ class BlivetLVMVolume(BlivetVolume):
     def _get_device_id(self):
         return "%s-%s" % (self._blivet_pool._device.name, self._volume['name'])
 
+    def _get_size(self):
+        size = super(BlivetLVMVolume, self)._get_size()
+        if '%' in self._volume['size']:
+            size = self._blivet_pool._device.align(size, roundup=True)
+        return size
+
     def _create(self):
         if self._device:
             return
@@ -359,10 +384,7 @@ class BlivetLVMVolume(BlivetVolume):
         if parent is None:
             raise BlivetAnsibleError("failed to find pool '%s' for volume '%s'" % (self._blivet_pool['name'], self._volume['name']))
 
-        try:
-            size = Size(self._volume['size'])
-        except Exception:
-            raise BlivetAnsibleError("invalid size '%s' specified for volume '%s'" % (self._volume['size'], self._volume['name']))
+        size = self._get_size()
 
         fmt = self._get_format()
         if size > parent.free_space:
