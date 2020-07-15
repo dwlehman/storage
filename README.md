@@ -55,7 +55,7 @@ This string specifies the full path to the key file used to unlock the LUKS volu
 This string specifies a non-default cipher to be used by LUKS.
 
 ##### `encryption_key_size`
-This integer specifies the LUKS key size (in bytes).
+This integer specifies the LUKS key size (in bits).
 
 ##### `encryption_luks_version`
 This integer specifies the LUKS version to use.
