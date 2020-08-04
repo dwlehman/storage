@@ -303,7 +303,11 @@ class BlivetVolume(BlivetBase):
         if self._device:
             return
 
-        device = self._blivet.devicetree.resolve_device(self._get_device_id())
+        device_id = self._get_device_id()
+        if not device_id:
+            return
+
+        device = self._blivet.devicetree.resolve_device(device_id)
         if device is None:
             return
 
@@ -464,7 +468,11 @@ class BlivetPartitionVolume(BlivetVolume):
         return self._device.raw_device.type == 'partition'
 
     def _get_device_id(self):
-        return self._blivet_pool._disks[0].name + '1'
+        device_id = None
+        if self._blivet_pool._disks[0].partitioned and len(self._blivet_pool._disks[0].children) == 1:
+            device_id = self._blivet_pool._disks[0].children[0].name
+
+        return device_id
 
     def _create(self):
         if self._device:
