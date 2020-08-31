@@ -1,0 +1,26 @@
+---
+- hosts: all
+  become: true
+  vars:
+    storage_safe_mode: false  # defaults to true, in which case no data will be removed unless explicitly requested
+    mount_dir: '/opt/vol1'
+    disks: ['sdd', 'sde']
+
+  tasks:
+    - include_role:
+        name: linux-system-roles.storage
+      vars:
+        storage_pools:
+          - name: testpool1
+            disks: "{{ disks }}"
+            raid_level: raid1
+            # some non-default option setting examples are below
+            #raid_chunk_size: '32k'
+            #raid_spare_count: 1
+            #raid_metadata_version: '1.0'
+            volumes:
+              - name: data
+                size: 10g
+                mount_point: "{{ mount_dir }}"
+      tags:
+        - setup 

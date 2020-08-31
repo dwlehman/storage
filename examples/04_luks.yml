@@ -1,0 +1,29 @@
+---
+- hosts: all
+  become: true
+  vars:
+    storage_safe_mode: false  # defaults to true, in which case no data will be removed unless explicitly requested
+    mount_dir: '/opt/vol1'
+    disks: ['sdd', 'sde']
+    password: 'orangedonutcactusmammoth'
+
+  tasks:
+    - include_role:
+        name: linux-system-roles.storage
+      vars:
+        storage_pools:
+          - name: testpool1
+            disks: "{{ disks }}"
+            volumes:
+              - name: data
+                size: 10g
+                mount_point: "{{ mount_dir }}"
+                encryption: true
+                encryption_password: "{{ password }}"
+                # some non-default option setting examples are below
+                #encryption_key: '/path/to/key_file'  # to use an encryption key instead of password
+                #encryption_key_size: 1024
+                #encryption_cipher: 'serpent-xts-plain64'
+                #encryption_luks_version: luks1
+      tags:
+        - setup
